@@ -5,13 +5,18 @@ import java.util.List;
 import javax.media.opengl.GL;
 
 import processing.core.PApplet;
-import toxi.geom.Rect;
+import processing.core.PImage;
 import toxi.geom.Vec2D;
-import toxi.physics2d.VerletParticle2D;
-import toxi.physics2d.VerletPhysics2D;
-import toxi.physics2d.VerletSpring2D;
+import toxi.geom.Vec3D;
+import toxi.geom.mesh.Face;
+import toxi.geom.mesh.TriangleMesh;
 import toxi.physics2d.behaviors.AttractionBehavior2D;
-import toxi.physics2d.behaviors.GravityBehavior2D;
+import toxi.physics3d.VerletParticle3D;
+import toxi.physics3d.VerletPhysics3D;
+import toxi.physics3d.VerletSpring3D;
+import toxi.physics3d.behaviors.AttractionBehavior3D;
+import toxi.physics3d.behaviors.GravityBehavior3D;
+import toxi.processing.ToxiclibsSupport;
 import TUIO.TuioClient;
 import TUIO.TuioCursor;
 import TUIO.TuioListener;
@@ -36,7 +41,7 @@ import controlP5.Toggle;
  * @author Christopher Pietsch
  */
 
-public class mesh1 extends PApplet implements TuioListener {
+public class texturedMesh extends PApplet implements TuioListener {
 
 	public static void main(String[] args) {
 
@@ -67,7 +72,7 @@ public class mesh1 extends PApplet implements TuioListener {
 		 */
 		// PApplet.main(new String[] { "--location=1440,0" , "--hide-stop",
 		// "--display=2","mesh1" });
-		PApplet.main(new String[] { "--location=1640,100", "mesh1" });
+		PApplet.main(new String[] { "--location=0,0", "texturedMesh" });
 
 	}
 
@@ -86,13 +91,18 @@ public class mesh1 extends PApplet implements TuioListener {
 	int DIMY;
 
 	float LINE_WEIGHT = 1;
-	VerletPhysics2D physics;
+	VerletPhysics3D physics;
 
-	VerletParticle2D head, tail;
-	AttractionBehavior2D mouseAttractor;
+	VerletParticle3D head, tail;
+	AttractionBehavior3D mouseAttractor;
+
+	boolean isGouraudShaded = true;
+
+	ToxiclibsSupport gfx;
+	TriangleMesh mesh;
 
 	// ArrayList<Particle> particles;
-	Vec2D mousePos;
+	Vec3D mousePos;
 	ControlP5 controlP5;
 	ControlWindow controlWindow;
 
@@ -110,108 +120,92 @@ public class mesh1 extends PApplet implements TuioListener {
 	private final boolean presentMode = true;
 	List<AttractionBehavior2D> attractors;
 
-	HashMap<Integer, AttractionBehavior2D> attractorMap = new HashMap<Integer, AttractionBehavior2D>();
+	HashMap<Integer, AttractionBehavior3D> attractorMap = new HashMap<Integer, AttractionBehavior3D>();
 	private boolean POINT_ANI;
 
-	// called when a cursor is added to the scene
+	PImage tex;
+
 	@Override
-	public void addTuioCursor(TuioCursor tcur) {
-		println("add cursor " + tcur.getCursorID() + " (" + tcur.getSessionID()
-				+ ") " + tcur.getX() + " " + tcur.getY());
+	public void setup() {
 
-		AttractionBehavior2D a = new AttractionBehavior2D(new Vec2D(
-				tcur.getScreenX(width), tcur.getScreenY(height)), mouseRadius,
-				(ATTRACTION_MODE == true ? -1 : 1) * mouseStrength);
-		physics.addBehavior(a);
-		attractorMap.put(tcur.getCursorID(), a);
+		size(600, 600, OPENGL);
 
-		// attractors.add(a);
-		// println(attractors.indexOf(a));
+		gfx = new ToxiclibsSupport(this);
 
-		// mousePos = new Vec2D(tcur.getScreenX(width),
-		// tcur.getScreenY(height));
-		// mouseAttractor = new AttractionBehavior(mousePos, mouseRadius,
-		// -1*mouseStrength);
-		// physics.addBehavior( mouseAttractor );
+		// hint( DISABLE_OPENGL_2X_SMOOTH );
+
+		// gl = ((PGraphicsOpenGL)g).gl;
+
+		frameRate(400);
+
+		tuioClient = new TuioClient();
+		tuioClient.addTuioListener(this);
+		tuioClient.connect();
+
+		initP5();
+		initPhysics();
+
+		tex = loadImage("tex2.jpg");
+
 	}
 
-	// called when an object is added to the scene
-	@Override
-	public void addTuioObject(TuioObject tobj) {
+	void updateMesh() {
+		mesh = new TriangleMesh();
+
+		Vec2D scaleUV = new Vec2D(DIMX - 1, DIMY - 1).reciprocal();
+
+		for (int y = 0; y < DIMY - 1; y++) {
+			for (int x = 0; x < DIMX - 1; x++) {
+				int i = y * DIMX + x;
+				VerletParticle3D a = physics.particles.get(i);
+				VerletParticle3D b = physics.particles.get(i + 1);
+				VerletParticle3D c = physics.particles.get(i + 1 + DIMX);
+				VerletParticle3D d = physics.particles.get(i + DIMX);
+				// compute UV coords for all 4 vertices...
+				Vec2D uva = new Vec2D(x, y).scaleSelf(scaleUV);
+				Vec2D uvb = new Vec2D(x + 1, y).scaleSelf(scaleUV);
+				Vec2D uvc = new Vec2D(x + 1, y + 1).scaleSelf(scaleUV);
+				Vec2D uvd = new Vec2D(x, y + 1).scaleSelf(scaleUV);
+				// ...and supply them along with the vertices
+				mesh.addFace(a, d, c, uva, uvd, uvc);
+				mesh.addFace(a, c, b, uva, uvc, uvb);
+			}
+		}
 
 	}
 
 	@Override
 	public void draw() {
+		background(0);
+		lights();
+		directionalLight(255, 255, 255, -500, 200, 300);
+		specular(255);
+		shininess(32);
+
+		physics.update();
 
 		// background(0,10);
-		fill(0, TRANSPARENT);
-		rect(0, 0, width, height);
+		// fill(255, TRANSPARENT);
+		// rect(0, 0, width, height);
 
-		// head.set(mouseX,mouseY);
-		if (frameCount > timeStamp + 10) {
-			physics.update();
-
-			strokeWeight(LINE_WEIGHT);
-
-			// beginShape(LINES);
-			// stroke(255, FILL_LINES);
-			for (VerletSpring2D s : physics.springs) {
-				int c = 255 - (int) s.a.distanceTo(s.b) * 5;
-				stroke(c, (s.a.x / width) * 200, 200, FILL_LINES);
-				// noStroke();
-				// stroke(50 + c / 5, s.a.x / 100, c, FILL_LINES);
-				// stroke(150 + c / 5, 100, c, FILL_LINES);
-				line(s.a.x, s.a.y, s.b.x, s.b.y);
-				// vertex(s.a.x, s.a.y);
-				// vertex(s.b.x, s.b.y);
-			}
-			// endShape();
-
-			int fill;
-
-			VerletParticle2D p;
-
-			for (int y = 0, idx = 0; y < DIMY; y++) {
-				for (int x = 0; x < DIMX; x++) {
-					fill = FILL_POINTS;
-
-					if (POINT_ANI) {
-						if (x == (frameCount % (DIMX))) {
-							fill = 255;
-						}
-					}
-					stroke(255, fill);
-					p = physics.particles.get(idx);
-					point(p.x, p.y);
-					idx++;
-				}
-			}
-
-			// for (VerletParticle2D p : physics.particles) {
-			// fill = FILL_POINTS;
-			// if (count == run) {
-			// fill = 255;
-			//
-			// }
-			// // println(fill);
-			// stroke(255, fill);
-			// point(p.x, p.y);
-			// count++;
-			// }
-			/*
-			 * pushMatrix(); translate(1,1,+100); stroke(255,40);
-			 * for(VerletSpring2D s: physics.springs){
-			 * line(s.a.x,s.a.y,s.b.x,s.b.y); } popMatrix();
-			 * 
-			 * pushMatrix(); translate(1,1,+200); stroke(255,20);
-			 * for(VerletSpring2D s: physics.springs){
-			 * line(s.a.x,s.a.y,s.b.x,s.b.y); } popMatrix();
-			 */
-
+		if (TRANSPARENT == 0) {
+			noFill();
 		} else {
-
+			fill(255, TRANSPARENT);
 		}
+
+		if (FILL_LINES == 0) {
+			noStroke();
+		} else {
+			stroke(255, FILL_LINES);
+		}
+
+		updateMesh();
+
+		textureMode(NORMAL);
+		gfx.texturedMesh(mesh, tex, isGouraudShaded);
+
+		// gfx.mesh(mesh, true);
 
 		if (bang) {
 			bang = false;
@@ -227,54 +221,22 @@ public class mesh1 extends PApplet implements TuioListener {
 		// println("fps: " + (int) frameRate);
 	}
 
-	public void draw2() {
-
-		// background(0,10);
-		fill(0, TRANSPARENT);
-		rect(0, 0, width, height);
-
-		// head.set(mouseX,mouseY);
-		if (frameCount > timeStamp + 10) {
-			physics.update();
-
-			strokeWeight(LINE_WEIGHT);
-			// stroke(255, FILL_LINES);
-			for (VerletSpring2D s : physics.springs) {
-				int c = (int) s.a.distanceTo(s.b) * 4;
-				stroke(c, s.a.x / 100, 100, FILL_LINES);
-				// stroke(50 + c / 5, s.a.x / 100, c, FILL_LINES);
-				// stroke(150 + c / 5, 100, c, FILL_LINES);
-				line(s.a.x, s.a.y, s.b.x, s.b.y);
-			}
-
-			stroke(255, FILL_POINTS);
-			for (VerletParticle2D p : physics.particles) {
-				point(p.x, p.y);
-			}
-			/*
-			 * pushMatrix(); translate(1,1,+100); stroke(255,40);
-			 * for(VerletSpring2D s: physics.springs){
-			 * line(s.a.x,s.a.y,s.b.x,s.b.y); } popMatrix();
-			 * 
-			 * pushMatrix(); translate(1,1,+200); stroke(255,20);
-			 * for(VerletSpring2D s: physics.springs){
-			 * line(s.a.x,s.a.y,s.b.x,s.b.y); } popMatrix();
-			 */
-
-		} else {
-
+	public void calcTextureCoordinates(TriangleMesh mesh) {
+		for (Face f : mesh.getFaces()) {
+			f.uvA = calcUV(f.a);
+			f.uvB = calcUV(f.b);
+			f.uvC = calcUV(f.c);
 		}
+	}
 
-		if (bang) {
-			bang = false;
-			initPhysics();
-		}
+	// compute a 2D texture coordinate from a 3D point on a sphere
+	// this function will be applied to all mesh vertices
+	Vec2D calcUV(Vec3D p) {
+		Vec3D s = p.copy();
+		Vec2D uv = new Vec2D(s.x / width, s.y / height);
+		// make sure longitude is always within 0.0 ... 1.0 interval
 
-		if (isSavingFrame) {
-			saveFrame("isocontour-frame-####.png");
-			// println( "iso num vertices: " + iso.numVertices );
-			// println( "fps: " + (int)frameRate );
-		}
+		return uv;
 	}
 
 	@Override
@@ -303,7 +265,7 @@ public class mesh1 extends PApplet implements TuioListener {
 			btAddAttractor.addListener(new ControlListener() {
 				@Override
 				public void controlEvent(ControlEvent e) {
-					controlP5.saveProperties(("mesh2d"
+					controlP5.saveProperties(("mesh3d"
 							+ e.getName().substring(0, 1) + ".ser"));
 				}
 			});
@@ -317,7 +279,7 @@ public class mesh1 extends PApplet implements TuioListener {
 			btAddAttractor.addListener(new ControlListener() {
 				@Override
 				public void controlEvent(ControlEvent e) {
-					controlP5.loadProperties(("mesh2d"
+					controlP5.loadProperties(("mesh3d"
 							+ e.getName().substring(0, 1) + ".ser"));
 					bang = true;
 				}
@@ -387,6 +349,10 @@ public class mesh1 extends PApplet implements TuioListener {
 		tog = controlP5.addToggle("POINT_ANI", false, 100, 180 + space, 20, 20);
 		tog.setWindow(controlWindow);
 
+		tog = controlP5.addToggle("isGouraudShaded", false, 210, 180 + space,
+				20, 20);
+		tog.setWindow(controlWindow);
+
 		space += 30;
 
 		Controller mySlider7 = controlP5.addSlider("FILL_LINES", 0, 255, 10,
@@ -406,7 +372,7 @@ public class mesh1 extends PApplet implements TuioListener {
 
 		controlWindow.setTitle("Control");
 
-		controlP5.loadProperties(("mesh2d0.ser"));
+		controlP5.loadProperties(("mesh3d0.ser"));
 
 	}
 
@@ -414,11 +380,11 @@ public class mesh1 extends PApplet implements TuioListener {
 		timeStamp = frameCount;
 		// TODO Auto-generated method stub
 
-		physics = new VerletPhysics2D();
-		physics.setWorldBounds(new Rect(0, 0, width, height));
+		physics = new VerletPhysics3D();
+		// physics.setWorldBounds(new Rect(0, 0, width, height));
 		physics.setDrag(WORLD_DRAG);
 
-		GravityBehavior2D grav = new GravityBehavior2D(new Vec2D(0, 0));
+		GravityBehavior3D grav = new GravityBehavior3D(new Vec3D(0, 0, 0));
 
 		attractors = new ArrayList<AttractionBehavior2D>();
 
@@ -432,20 +398,21 @@ public class mesh1 extends PApplet implements TuioListener {
 
 		for (int y = 0, idx = 0; y < DIMY; y++) {
 			for (int x = 0; x < DIMX; x++) {
-				VerletParticle2D p = new VerletParticle2D(x * SPACE, y * SPACE);
+				VerletParticle3D p = new VerletParticle3D(x * SPACE, y * SPACE,
+						0);
 				physics.addParticle(p);
 				if (x == 0 || x == DIMX - 1 || y == 0 || y == DIMY - 1) {
-					// p.lock();
+					p.lock();
 					// println(p.toString());
 				}
 				if (x > 0) {
-					VerletSpring2D s = new VerletSpring2D(p,
+					VerletSpring3D s = new VerletSpring3D(p,
 							physics.particles.get(idx - 1), SPRING_REST,
 							SPRING_STRENGTH);
 					physics.addSpring(s);
 				}
 				if (y > 0) {
-					VerletSpring2D s = new VerletSpring2D(p,
+					VerletSpring3D s = new VerletSpring3D(p,
 							physics.particles.get(idx - DIMX), SPRING_REST,
 							SPRING_STRENGTH);
 					physics.addSpring(s);
@@ -453,20 +420,6 @@ public class mesh1 extends PApplet implements TuioListener {
 				idx++;
 			}
 		}
-
-		/*
-		 * VerletParticle2D p=physics.particles.get(0); VerletParticle2D
-		 * q=physics.particles.get(physics.particles.size()-1); float
-		 * len=sqrt(sq(REST_LENGTH*(DIM-1))*2); VerletSpring2D s=new
-		 * VerletSpring2D(p,q,len,INNER_STRENGTH); physics.addSpring(s);
-		 * 
-		 * p=physics.particles.get(DIM-1);
-		 * q=physics.particles.get(physics.particles.size()-DIM); s=new
-		 * VerletSpring2D(p,q,len,INNER_STRENGTH); physics.addSpring(s);
-		 */
-
-		// head=physics.particles.get((DIM-1)/2);
-		// head.lock();
 
 	}
 
@@ -497,15 +450,15 @@ public class mesh1 extends PApplet implements TuioListener {
 	 */
 	@Override
 	public void mouseDragged() {
-		mousePos.set(mouseX, mouseY);
+		mousePos.set(mouseX, mouseY, 0);
 
 	}
 
 	@Override
 	public void mousePressed() {
-		mousePos = new Vec2D(mouseX, mouseY);
+		mousePos = new Vec3D(mouseX, mouseY, 0);
 
-		mouseAttractor = new AttractionBehavior2D(mousePos, mouseRadius,
+		mouseAttractor = new AttractionBehavior3D(mousePos, mouseRadius,
 				(ATTRACTION_MODE == true ? -1 : 1) * mouseStrength);
 		physics.addBehavior(mouseAttractor);
 	}
@@ -538,26 +491,6 @@ public class mesh1 extends PApplet implements TuioListener {
 		// println("remove object "+tobj.getSymbolID()+" ("+tobj.getSessionID()+")");
 	}
 
-	@Override
-	public void setup() {
-
-		size(600, 600, OPENGL);
-
-		// hint( DISABLE_OPENGL_2X_SMOOTH );
-
-		// gl = ((PGraphicsOpenGL)g).gl;
-
-		frameRate(400);
-
-		tuioClient = new TuioClient();
-		tuioClient.addTuioListener(this);
-		tuioClient.connect();
-
-		initP5();
-		initPhysics();
-
-	}
-
 	public void setWindowBorder() {
 		if (frame != null && presentMode) {
 			frame.removeNotify();
@@ -573,7 +506,7 @@ public class mesh1 extends PApplet implements TuioListener {
 	public void updateTuioCursor(TuioCursor tcur) {
 
 		attractorMap.get(tcur.getCursorID()).getAttractor()
-				.set(tcur.getScreenX(width), tcur.getScreenY(height));
+				.set(tcur.getScreenX(width), tcur.getScreenY(height), 0);
 	}
 
 	// called when an object is moved
@@ -581,5 +514,33 @@ public class mesh1 extends PApplet implements TuioListener {
 	public void updateTuioObject(TuioObject tobj) {
 		// println("update object "+tobj.getSymbolID()+" ("+tobj.getSessionID()+") "+tobj.getX()+" "+tobj.getY()+" "+tobj.getAngle()
 		// +" "+tobj.getMotionSpeed()+" "+tobj.getRotationSpeed()+" "+tobj.getMotionAccel()+" "+tobj.getRotationAccel());
+	}
+
+	// called when a cursor is added to the scene
+	@Override
+	public void addTuioCursor(TuioCursor tcur) {
+		println("add cursor " + tcur.getCursorID() + " (" + tcur.getSessionID()
+				+ ") " + tcur.getX() + " " + tcur.getY());
+
+		AttractionBehavior3D a = new AttractionBehavior3D(new Vec3D(
+				tcur.getScreenX(width), tcur.getScreenY(height), 0),
+				mouseRadius, (ATTRACTION_MODE == true ? -1 : 1) * mouseStrength);
+		physics.addBehavior(a);
+		attractorMap.put(tcur.getCursorID(), a);
+
+		// attractors.add(a);
+		// println(attractors.indexOf(a));
+
+		// mousePos = new Vec2D(tcur.getScreenX(width),
+		// tcur.getScreenY(height));
+		// mouseAttractor = new AttractionBehavior(mousePos, mouseRadius,
+		// -1*mouseStrength);
+		// physics.addBehavior( mouseAttractor );
+	}
+
+	// called when an object is added to the scene
+	@Override
+	public void addTuioObject(TuioObject tobj) {
+
 	}
 }
